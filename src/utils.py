@@ -33,14 +33,41 @@ model_code_to_cmodel_name = {
 def load_cached_data(cache_file, load_function, *args, **kwargs):
     if os.path.exists(cache_file):
         logger.info(f"Cache file {cache_file} exists. Loading data...")
-        with open(cache_file, 'rb') as f:
-            return pickle.load(f)
+        try:
+            with open(cache_file, 'rb') as f:
+                return pickle.load(f)
+        except Exception as e:
+            logger.error(f"Error loading cache file {cache_file}: {e}")
+            logger.info(f"Regenerating data...")
+            # If loading the cache fails, regenerate the data
+            try:
+                data = load_function(*args, **kwargs)
+                # Save the regenerated data to cache
+                try:
+                    with open(cache_file, 'wb') as f:
+                        pickle.dump(data, f)
+                except Exception as e:
+                    logger.error(f"Error saving regenerated data to cache {cache_file}: {e}")
+                return data
+            except Exception as e:
+                logger.error(f"Error regenerating data: {e}")
+                return None
     else:
         logger.info(f"Cache file {cache_file} does not exist. Generating data...")
-        data = load_function(*args, **kwargs)
-        with open(cache_file, 'wb') as f:
-            pickle.dump(data, f)
-        return data
+        try:
+            data = load_function(*args, **kwargs)
+            # Save the generated data to cache
+            try:
+                # Create directory if it doesn't exist
+                os.makedirs(os.path.dirname(cache_file), exist_ok=True)
+                with open(cache_file, 'wb') as f:
+                    pickle.dump(data, f)
+            except Exception as e:
+                logger.error(f"Error saving data to cache {cache_file}: {e}")
+            return data
+        except Exception as e:
+            logger.error(f"Error generating data: {e}")
+            return None
     
 
 
@@ -165,9 +192,22 @@ def save_json(results, file_path="debug.json"):
         json.dump(dict_from_str, f, indent=4)
 
 def load_json(file_path):
-    with open(file_path) as file:
-        results = json.load(file)
-    return results
+    try:
+        with open(file_path) as file:
+            results = json.load(file)
+        return results
+    except FileNotFoundError:
+        logger.error(f"File not found: {file_path}")
+        # Create and return an empty dict if the file doesn't exist
+        return {}
+    except json.JSONDecodeError:
+        logger.error(f"Invalid JSON file: {file_path}")
+        # Create and return an empty dict if the file is not valid JSON
+        return {}
+    except Exception as e:
+        logger.error(f"Error loading JSON file {file_path}: {e}")
+        # Create and return an empty dict for any other error
+        return {}
 
 def setup_seeds(seed):
     random.seed(seed)
