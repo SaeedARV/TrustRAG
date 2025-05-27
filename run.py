@@ -87,3 +87,18 @@ for method in defense_methods:
     test_params['model_name'] = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"  # Use the smallest model for quick testing
     test_params['eval_dataset'] = 'nq'  # Use a single dataset for comparison
     run(test_params)
+
+# Test with RL-based defense method
+test_params['defend_method'] = 'conflict'  # Use conflict method with RL filtering
+test_params['removal_method'] = 'rl'
+test_params['model_name'] = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+test_params['eval_dataset'] = 'nq'
+test_params['note'] = 'rl_defense'
+run(test_params)
+
+# Test RL-based method with different datasets
+for dataset in ['nq', 'hotpotqa', 'msmarco']:
+    test_params['eval_dataset'] = dataset
+    test_params['removal_method'] = 'rl'
+    test_params['note'] = f'rl_defense_{dataset}'
+    run(test_params)

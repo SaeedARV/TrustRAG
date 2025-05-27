@@ -79,6 +79,57 @@ This document outlines the key enhancements made to the TrustRAG project to impr
 - **Informative Logging**: Added detailed logging to help diagnose issues
 - **Input Resilience**: Made the code more resilient to unexpected inputs or failures
 
+## Changes to TrustRAG
+
+This document records the significant changes and improvements made to the TrustRAG project.
+
+### Latest Changes
+
+#### Added Reinforcement Learning-based Adversarial Content Detection
+- Implemented a DQN (Deep Q-Network) based defender that learns to identify adversarial content
+- Added a feature extraction system that analyzes document content for suspicious patterns
+- Implemented experience replay for more stable training of the RL model
+- Added a reward mechanism that reinforces correct classification of adversarial content
+- Created persistence mechanism to save and load trained models
+- Integrated with existing defense methods to create a more robust security system
+
+#### Enhanced K-means Filtering
+- Implemented K-means++ initialization for better cluster centers
+- Added pattern-based detection for common adversarial patterns
+- Improved n-gram analysis with dynamic thresholds
+- Added more sophisticated cluster analysis
+- Improved error handling and robustness
+
+#### Error Handling and Robustness Improvements
+- Added robust error handling in dataset loading
+- Created fallback mechanisms when BEIR datasets can't be loaded
+- Added synthetic dataset generation when original data is unavailable
+- Enhanced the model loading process with cascading fallbacks
+- Improved the BEIR results loading with error handling and synthetic result generation
+
+#### Model Compatibility
+- Modified the code to use open-source models instead of gated ones
+- Added fallback mechanisms to smaller models when larger ones fail
+- Fixed the issue with trying to use gated Mistral model
+- Ensured compatibility with smaller, more accessible models
+- Provided better error messages for model loading failures
+
+### Previous Changes
+
+#### Added Robust Prompting
+- Modified prompts in src/prompts.py for better robustness
+- Enhanced defense mechanisms against adversarial content
+- Improved the effectiveness of the conflict_query function
+
+#### Created Sample Datasets
+- Added sample dataset files for NQ, HotpotQA, and MSMarco
+- Improved error handling when loading datasets
+
+#### Other Improvements
+- Fixed bugs in the filtering algorithms
+- Improved code organization and documentation
+- Enhanced logging and error reporting
+
 These enhancements significantly improve TrustRAG's ability to:
 1. Detect and filter out adversarial content
 2. Provide more accurate and trustworthy answers

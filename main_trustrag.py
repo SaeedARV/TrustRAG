@@ -39,8 +39,9 @@ def parse_args():
     parser.add_argument('--M', type=int, default=10, help='one of our parameters, the number of target queries')
     parser.add_argument('--seed', type=int, default=12, help='Random seed')
     parser.add_argument("--log_name", type=str, help="Name of log and result.")
-    parser.add_argument("--removal_method", type=str, default='kmeans_ngram', choices=['kmeans', 'kmeans_ngram', 'none'])
+    parser.add_argument("--removal_method", type=str, default='kmeans_ngram', choices=['kmeans', 'kmeans_ngram', 'rl', 'none'])
     parser.add_argument("--defend_method", type=str, default='conflict', choices=['none', 'conflict', 'astute', 'instruct'])
+    parser.add_argument("--rl_training", type=bool, default=True, help='Whether to train the RL model during filtering')
     args = parser.parse_args()
     logger.info(args)
     return args
@@ -362,8 +363,20 @@ def main():
                         topk_contents.append(pia_attack)
                         adv_text_set = [pia_attack]
                 
-                # Apply k-means filtering if specified (for any attack method)
-                if (args.removal_method in ['kmeans', 'kmeans_ngram']) and args.top_k!=1:
+                # Apply filtering method based on the specified removal method
+                if args.removal_method == 'rl':
+                    from defend_module import rl_defender, rl_filtering
+                    # Use RL-based filtering
+                    logger.info("Using RL-based filtering method")
+                    embedding_topk, topk_contents = rl_filtering(
+                        embedding_topk,
+                        topk_contents, 
+                        adv_text_set, 
+                        "ngram" in args.removal_method,
+                        defender=rl_defender,
+                        is_training=args.rl_training
+                    )
+                elif (args.removal_method in ['kmeans', 'kmeans_ngram']) and args.top_k!=1:
                     logger.info("Using removal method: {}".format(args.removal_method))
                     try:
                         embedding_topk = [list(get_sentence_embedding(sentence, embedding_tokenizer, embedding_model).cpu().numpy()[0]) for sentence in topk_contents]

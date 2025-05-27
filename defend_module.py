@@ -9,6 +9,10 @@ from nltk.translate.bleu_score import sentence_bleu
 from itertools import combinations
 from src.utils import progress_bar
 from rouge_score import rouge_scorer
+from src.rl_defender import RLDefender, rl_filtering
+
+# Global RL defender instance (to reuse between calls)
+rl_defender = None
 
 def get_sentence_embedding(sentence, tokenizer, model):
     inputs = tokenizer(sentence, return_tensors="pt", truncation=True, padding=True)
@@ -67,9 +71,48 @@ def group_n_gram_filtering(topk_contents):
                     current_del_list.append(index)
     return list(set(current_del_list))
 
+def kmeans_plus_plus_init(data, k, random_state=0):
+    """
+    Implements K-means++ initialization to find better initial cluster centers.
+    
+    Args:
+        data: Array of data points (n_samples, n_features)
+        k: Number of clusters
+        random_state: Random seed for reproducibility
+        
+    Returns:
+        Array of initial cluster centers (k, n_features)
+    """
+    np.random.seed(random_state)
+    n_samples, n_features = data.shape
+    
+    # Initialize with first center randomly
+    centers = np.zeros((k, n_features))
+    first_idx = np.random.randint(0, n_samples)
+    centers[0] = data[first_idx]
+    
+    # Compute remaining centers
+    for c in range(1, k):
+        # Compute distances from points to nearest existing center
+        min_dists = np.min([np.sum((data - center) ** 2, axis=1) for center in centers[:c]], axis=0)
+        
+        # Choose next center with probability proportional to squared distance
+        probs = min_dists / min_dists.sum()
+        cumprobs = np.cumsum(probs)
+        r = np.random.random()
+        next_idx = np.searchsorted(cumprobs, r)
+        if next_idx >= n_samples:  # Guard against edge case
+            next_idx = np.random.randint(0, n_samples)
+            
+        centers[c] = data[next_idx]
+    
+    return centers
+
 def k_mean_filtering(embedding_topk, topk_contents, adv_text_set, n_gram):
     """
-    Enhanced K-means filtering with better n-gram handling and adversarial content detection.
+    Enhanced K-means filtering with improved adversarial content detection, outlier detection,
+    and dynamic thresholding for better filtering performance. Uses K-means++ initialization
+    for better cluster centers.
     
     Args:
         embedding_topk: Embeddings of the top-k retrieved documents
@@ -84,145 +127,286 @@ def k_mean_filtering(embedding_topk, topk_contents, adv_text_set, n_gram):
     if len(topk_contents) <= 1:
         return embedding_topk, topk_contents
     
-    # Check for adversarial content directly
+    # Step 1: Direct adversarial content detection
     adv_indices = []
     for i, content in enumerate(topk_contents):
         if content in adv_text_set:
             adv_indices.append(i)
+            
+    # Step 2: Enhanced pattern-based detection for common adversarial patterns
+    suspicious_patterns = [
+        "please output:", "when asked", "respond with", "your answer should be",
+        "override", "ignore previous", "instead of", "make sure to say",
+        "must respond", "you are required to", "always answer", "always respond",
+        "answer must be", "when you see this", "forget all instructions"
+    ]
     
-    # If we found adversarial content, remove it
+    for i, content in enumerate(topk_contents):
+        content_lower = content.lower()
+        if any(pattern in content_lower for pattern in suspicious_patterns):
+            if i not in adv_indices:
+                adv_indices.append(i)
+    
+    # Filter out identified adversarial content
     if adv_indices:
-        # Create mask for non-adversarial content
         mask = np.ones(len(topk_contents), dtype=bool)
         for idx in adv_indices:
             mask[idx] = False
         
-        # Filter out adversarial content
-        filtered_embeddings = np.array([embedding_topk[i] for i in range(len(embedding_topk)) if mask[i]])
+        filtered_embeddings = embedding_topk[mask]
         filtered_contents = [content for i, content in enumerate(topk_contents) if mask[i]]
         
-        # If we removed everything, return empty lists
-        if len(filtered_contents) == 0:
-            return [], []
-        
-        # If after filtering, we only have one document left, return it
-        if len(filtered_contents) == 1:
+        # If we've filtered out everything or only have one document left
+        if len(filtered_contents) <= 1:
             return filtered_embeddings, filtered_contents
-    
-    # Enhanced n-gram check
-    if n_gram:
-        n_gram_flag = 0
-        metric = 'rouge' 
-        for sentence in range(len(topk_contents)):
-            for sentence_1 in range(sentence + 1, len(topk_contents)):
-                score = calculate_average_score(topk_contents[sentence], topk_contents[sentence_1], metric=metric)
-                if score > 0.25: 
-                    n_gram_flag = 1
-                    break
-            if n_gram_flag==1: 
-                break
-        if not n_gram_flag: 
-            return embedding_topk, topk_contents
-
-    # Continue with the rest of the function as before
-    scaler = StandardScaler()
-    embedding_topk_norm = scaler.fit_transform(embedding_topk) 
-
-    length = np.sqrt((embedding_topk_norm**2).sum(axis=1))[:,None] 
-    embedding_topk_norm = embedding_topk_norm / length 
-    kmeans = KMeans(n_clusters=2,n_init=10,max_iter=500, random_state=0).fit(embedding_topk_norm) 
-   
-    array_1 = [topk_contents[index] for index in range(len(kmeans.labels_)) if kmeans.labels_[index] == 1] 
-    array_1_emb = [embedding_topk[index] for index in range(len(kmeans.labels_)) if kmeans.labels_[index] == 1] 
-    array_0 = [topk_contents[index] for index in range(len(kmeans.labels_)) if kmeans.labels_[index] == 0] 
-    array_0_emb = [embedding_topk[index] for index in range(len(kmeans.labels_)) if kmeans.labels_[index] == 0] 
-    
-    array_1_avg=[] 
-    for index in range(len(array_1)):
-        for index_1 in range(index + 1, len(array_1)):
-            similarity_score = calculate_similarity(array_1_emb[index], array_1_emb[index_1]) 
-            array_1_avg.append(similarity_score) 
-
-    array_0_avg=[] 
-    for index in range(len(array_0)):
-        for index_1 in range(index + 1, len(array_0)):
-            similarity_score = calculate_similarity(array_0_emb[index], array_0_emb[index_1]) 
-            array_0_avg.append(similarity_score) 
-
-    threshold=0.88 
-
-    if len(array_1_avg)==0: 
-        if (np.mean(array_0_avg)>threshold): 
-            if calculate_similarity(array_0_emb[0], array_1_emb[0]) > threshold: 
-                return [],[]
-            topk_contents = array_1
-            topk_embeddings = array_1_emb
-            return topk_embeddings,topk_contents
-        else:
-            topk_contents = array_0
-            topk_embeddings = array_0_emb
-            return topk_embeddings,topk_contents
-
-    if len(array_0_avg)==0: 
-        if (np.mean(array_1_avg)>threshold): 
-            if calculate_similarity(array_0_emb[0], array_1_emb[0]) > threshold:
-                return [],[]
-            topk_contents = array_0
-            topk_embeddings = array_0_emb
-            return topk_embeddings,topk_contents
-        else:
-            topk_contents = array_1
-            topk_embeddings = array_1_emb
-            return topk_embeddings,topk_contents
-   
-    if np.mean(array_1_avg) > np.mean(array_0_avg):
-        if  np.mean(array_0_avg) >threshold:
-            return [],[]
-        if np.mean(array_1_avg)<threshold:
-                del_list_1 = group_n_gram_filtering(array_1)
-                del_list_0 = group_n_gram_filtering(array_0)
-
-                array_1 = [element for index, element in enumerate(array_1) if index not in del_list_1]
-                array_0 = [element for index, element in enumerate(array_0) if index not in del_list_0]
-                array_1_emb = [element for index, element in enumerate(array_1_emb) if index not in del_list_1]
-                array_0_emb = [element for index, element in enumerate(array_0_emb) if index not in del_list_0]
-                array_1.extend(array_0)
-                array_1_emb.extend(array_0_emb)
-                topk_contents = array_1
-                topk_embeddings = array_1_emb      
-        else:
-            del_list_0 = group_n_gram_filtering(array_0)
-            array_0 = [element for index, element in enumerate(array_0) if index not in del_list_0]
-            array_0_emb = [element for index, element in enumerate(array_0_emb) if index not in del_list_0]
-
-
-            topk_contents = array_0
-            topk_embeddings = array_0_emb
-    else:
-        if  np.mean(array_1_avg) >threshold:
-                return [],[]
-        if np.mean(array_0_avg)<threshold:
-                del_list_1 = group_n_gram_filtering(array_1)
-                del_list_0 = group_n_gram_filtering(array_0)
-
-                array_1 = [element for index, element in enumerate(array_1) if index not in del_list_1]
-                array_0 = [element for index, element in enumerate(array_0) if index not in del_list_0]
-                array_1_emb = [element for index, element in enumerate(array_1_emb) if index not in del_list_1]
-                array_0_emb = [element for index, element in enumerate(array_0_emb) if index not in del_list_0]
-                array_1.extend(array_0)
-                array_1_emb.extend(array_0_emb)
-                topk_contents = array_1
-                topk_embeddings = array_1_emb
         
+        # Update for further processing
+        embedding_topk = filtered_embeddings
+        topk_contents = filtered_contents
+    
+    # Step 3: Enhanced n-gram check with improved threshold
+    if n_gram:
+        # Perform comprehensive n-gram analysis to identify similar content
+        similarity_matrix = np.zeros((len(topk_contents), len(topk_contents)))
+        suspicious_pairs = []
+        
+        for i in range(len(topk_contents)):
+            for j in range(i+1, len(topk_contents)):
+                score = calculate_average_score(topk_contents[i], topk_contents[j], metric='rouge')
+                similarity_matrix[i, j] = score
+                similarity_matrix[j, i] = score
+                
+                # Use a dynamic threshold based on content length
+                length_factor = min(len(topk_contents[i]), len(topk_contents[j])) / 100
+                adjusted_threshold = max(0.2, min(0.4, 0.25 + length_factor * 0.05))
+                
+                if score > adjusted_threshold:
+                    suspicious_pairs.append((i, j, score))
+        
+        # If we found suspicious pairs, further analyze them
+        if suspicious_pairs:
+            # Sort by similarity score in descending order
+            suspicious_pairs.sort(key=lambda x: x[2], reverse=True)
+            
+            # Remove content with highest similarity (potentially adversarial)
+            to_remove = set()
+            for i, j, _ in suspicious_pairs:
+                # Don't remove both in a pair
+                if i not in to_remove and j not in to_remove:
+                    # Remove the one with more connections to others
+                    i_connections = np.sum(similarity_matrix[i] > 0.2)
+                    j_connections = np.sum(similarity_matrix[j] > 0.2)
+                    
+                    if i_connections > j_connections:
+                        to_remove.add(i)
+                    else:
+                        to_remove.add(j)
+            
+            if to_remove:
+                mask = np.ones(len(topk_contents), dtype=bool)
+                for idx in to_remove:
+                    mask[idx] = False
+                
+                embedding_topk = embedding_topk[mask]
+                topk_contents = [content for i, content in enumerate(topk_contents) if mask[i]]
+                
+                # If we've filtered out everything or only have one document left
+                if len(topk_contents) <= 1:
+                    return embedding_topk, topk_contents
+    
+    # Step 4: Improved K-means clustering with outlier detection
+    # Normalize embeddings
+    scaler = StandardScaler()
+    embedding_topk_norm = scaler.fit_transform(embedding_topk)
+    
+    # Unit normalize for cosine distance
+    length = np.sqrt((embedding_topk_norm**2).sum(axis=1))[:, None]
+    embedding_topk_norm = embedding_topk_norm / length
+    
+    # Apply K-means++ clustering with 2 clusters
+    if len(embedding_topk_norm) < 2:
+        # Not enough data points for clustering
+        return embedding_topk, topk_contents
+        
+    n_clusters = min(2, len(embedding_topk_norm))
+    
+    # Use K-means++ initialization
+    try:
+        # Get initial centers using K-means++ algorithm
+        initial_centers = kmeans_plus_plus_init(embedding_topk_norm, n_clusters, random_state=0)
+        
+        # Initialize KMeans with these centers
+        kmeans = KMeans(n_clusters=n_clusters, 
+                         n_init=1,  # Use only one initialization since we provide centers
+                         init=initial_centers,
+                         max_iter=500, 
+                         random_state=0)
+        
+        # Fit K-means with our initial centers
+        kmeans.fit(embedding_topk_norm)
+    except Exception as e:
+        # Fallback to standard K-means if K-means++ fails
+        print(f"K-means++ initialization failed, falling back to standard K-means: {e}")
+        kmeans = KMeans(n_clusters=n_clusters, n_init=10, max_iter=500, random_state=0)
+        kmeans.fit(embedding_topk_norm)
+    
+    # Split into clusters
+    cluster_1_indices = [i for i, label in enumerate(kmeans.labels_) if label == 1] if n_clusters > 1 else []
+    cluster_0_indices = [i for i, label in enumerate(kmeans.labels_) if label == 0]
+    
+    cluster_1_contents = [topk_contents[i] for i in cluster_1_indices]
+    cluster_1_embeddings = embedding_topk[cluster_1_indices] if cluster_1_indices else np.array([]).reshape(0, embedding_topk.shape[1])
+    
+    cluster_0_contents = [topk_contents[i] for i in cluster_0_indices]
+    cluster_0_embeddings = embedding_topk[cluster_0_indices]
+    
+    # Step 5: Calculate intra-cluster similarities
+    # For cluster 1
+    cluster_1_similarities = []
+    for i in range(len(cluster_1_embeddings)):
+        for j in range(i+1, len(cluster_1_embeddings)):
+            similarity = calculate_similarity(cluster_1_embeddings[i], cluster_1_embeddings[j])
+            cluster_1_similarities.append(similarity)
+    
+    # For cluster 0
+    cluster_0_similarities = []
+    for i in range(len(cluster_0_embeddings)):
+        for j in range(i+1, len(cluster_0_embeddings)):
+            similarity = calculate_similarity(cluster_0_embeddings[i], cluster_0_embeddings[j])
+            cluster_0_similarities.append(similarity)
+    
+    # Step 6: Advanced cluster analysis and selection
+    # Dynamic threshold based on cluster sizes and similarity distributions
+    threshold_base = 0.85
+    threshold_adjustment = 0.03 * (np.log(len(topk_contents)) if len(topk_contents) > 1 else 0)
+    threshold = threshold_base + threshold_adjustment
+    
+    # Handle empty clusters or single-element clusters
+    if n_clusters < 2 or len(cluster_1_similarities) == 0:
+        if len(cluster_0_similarities) == 0:
+            # Both clusters are singleton or one cluster, return the original content
+            return embedding_topk, topk_contents
+        elif np.mean(cluster_0_similarities) > threshold:
+            # Cluster 0 is too similar internally, likely contains adversarial content
+            return cluster_1_embeddings, cluster_1_contents
         else:
-            del_list_1 = group_n_gram_filtering(array_1)
-            array_1 = [element for index, element in enumerate(array_1) if index not in del_list_1]
-            array_1_emb = [element for index, element in enumerate(array_1_emb) if index not in del_list_1]
-
-
-            topk_contents = array_1
-            topk_embeddings = array_1_emb
-    return topk_embeddings,topk_contents
+            # Cluster 0 seems normal, return it
+            return cluster_0_embeddings, cluster_0_contents
+    
+    if len(cluster_0_similarities) == 0:
+        if np.mean(cluster_1_similarities) > threshold:
+            # Cluster 1 is too similar internally, likely contains adversarial content
+            return cluster_0_embeddings, cluster_0_contents
+        else:
+            # Cluster 1 seems normal, return it
+            return cluster_1_embeddings, cluster_1_contents
+    
+    # Both clusters have internal similarities to evaluate
+    cluster_1_avg_similarity = np.mean(cluster_1_similarities) if cluster_1_similarities else 0
+    cluster_0_avg_similarity = np.mean(cluster_0_similarities) if cluster_0_similarities else 0
+    
+    # Check for anomalously high similarity in either cluster
+    if cluster_1_avg_similarity > threshold and cluster_0_avg_similarity > threshold:
+        # Both clusters show suspicious similarity patterns
+        return np.array([]).reshape(0, embedding_topk.shape[1]), []  # Return empty to indicate filtering all content
+    
+    # Step 7: Select the better cluster based on similarity analysis
+    if cluster_1_avg_similarity > cluster_0_avg_similarity:
+        # Cluster 1 is more internally similar (potentially adversarial)
+        if cluster_1_avg_similarity > threshold:
+            # Apply n-gram filtering to cluster 0 for additional refinement
+            if n_gram:
+                del_list = group_n_gram_filtering(cluster_0_contents)
+                cluster_0_contents = [element for i, element in enumerate(cluster_0_contents) if i not in del_list]
+                cluster_0_embeddings = cluster_0_embeddings[[i for i in range(len(cluster_0_embeddings)) if i not in del_list]]
+            return cluster_0_embeddings, cluster_0_contents
+        else:
+            # Neither cluster exceeds threshold, combine filtered content from both
+            if n_gram:
+                del_list_1 = group_n_gram_filtering(cluster_1_contents)
+                del_list_0 = group_n_gram_filtering(cluster_0_contents)
+                
+                filtered_cluster_1_contents = [element for i, element in enumerate(cluster_1_contents) if i not in del_list_1]
+                filtered_cluster_0_contents = [element for i, element in enumerate(cluster_0_contents) if i not in del_list_0]
+                
+                filtered_cluster_1_embeddings = cluster_1_embeddings[[i for i in range(len(cluster_1_embeddings)) if i not in del_list_1]] if len(cluster_1_embeddings) > 0 else cluster_1_embeddings
+                filtered_cluster_0_embeddings = cluster_0_embeddings[[i for i in range(len(cluster_0_embeddings)) if i not in del_list_0]] if len(cluster_0_embeddings) > 0 else cluster_0_embeddings
+                
+                combined_contents = filtered_cluster_0_contents + filtered_cluster_1_contents
+                
+                # Handle empty embeddings safely
+                if len(filtered_cluster_0_embeddings) > 0 and len(filtered_cluster_1_embeddings) > 0:
+                    combined_embeddings = np.vstack((filtered_cluster_0_embeddings, filtered_cluster_1_embeddings))
+                elif len(filtered_cluster_0_embeddings) > 0:
+                    combined_embeddings = filtered_cluster_0_embeddings
+                elif len(filtered_cluster_1_embeddings) > 0:
+                    combined_embeddings = filtered_cluster_1_embeddings
+                else:
+                    combined_embeddings = np.array([]).reshape(0, embedding_topk.shape[1])
+                
+                return combined_embeddings, combined_contents
+            else:
+                combined_contents = cluster_0_contents + cluster_1_contents
+                
+                # Handle empty embeddings safely
+                if len(cluster_0_embeddings) > 0 and len(cluster_1_embeddings) > 0:
+                    combined_embeddings = np.vstack((cluster_0_embeddings, cluster_1_embeddings))
+                elif len(cluster_0_embeddings) > 0:
+                    combined_embeddings = cluster_0_embeddings
+                elif len(cluster_1_embeddings) > 0:
+                    combined_embeddings = cluster_1_embeddings
+                else:
+                    combined_embeddings = np.array([]).reshape(0, embedding_topk.shape[1])
+                    
+                return combined_embeddings, combined_contents
+    else:
+        # Cluster 0 is more internally similar (potentially adversarial)
+        if cluster_0_avg_similarity > threshold:
+            # Apply n-gram filtering to cluster 1 for additional refinement
+            if n_gram:
+                del_list = group_n_gram_filtering(cluster_1_contents)
+                cluster_1_contents = [element for i, element in enumerate(cluster_1_contents) if i not in del_list]
+                cluster_1_embeddings = cluster_1_embeddings[[i for i in range(len(cluster_1_embeddings)) if i not in del_list]] if len(cluster_1_embeddings) > 0 else cluster_1_embeddings
+            return cluster_1_embeddings, cluster_1_contents
+        else:
+            # Neither cluster exceeds threshold, combine filtered content from both
+            if n_gram:
+                del_list_1 = group_n_gram_filtering(cluster_1_contents)
+                del_list_0 = group_n_gram_filtering(cluster_0_contents)
+                
+                filtered_cluster_1_contents = [element for i, element in enumerate(cluster_1_contents) if i not in del_list_1]
+                filtered_cluster_0_contents = [element for i, element in enumerate(cluster_0_contents) if i not in del_list_0]
+                
+                filtered_cluster_1_embeddings = cluster_1_embeddings[[i for i in range(len(cluster_1_embeddings)) if i not in del_list_1]] if len(cluster_1_embeddings) > 0 else cluster_1_embeddings
+                filtered_cluster_0_embeddings = cluster_0_embeddings[[i for i in range(len(cluster_0_embeddings)) if i not in del_list_0]] if len(cluster_0_embeddings) > 0 else cluster_0_embeddings
+                
+                combined_contents = filtered_cluster_1_contents + filtered_cluster_0_contents
+                
+                # Handle empty embeddings safely
+                if len(filtered_cluster_1_embeddings) > 0 and len(filtered_cluster_0_embeddings) > 0:
+                    combined_embeddings = np.vstack((filtered_cluster_1_embeddings, filtered_cluster_0_embeddings))
+                elif len(filtered_cluster_1_embeddings) > 0:
+                    combined_embeddings = filtered_cluster_1_embeddings
+                elif len(filtered_cluster_0_embeddings) > 0:
+                    combined_embeddings = filtered_cluster_0_embeddings
+                else:
+                    combined_embeddings = np.array([]).reshape(0, embedding_topk.shape[1])
+                
+                return combined_embeddings, combined_contents
+            else:
+                combined_contents = cluster_1_contents + cluster_0_contents
+                
+                # Handle empty embeddings safely
+                if len(cluster_1_embeddings) > 0 and len(cluster_0_embeddings) > 0:
+                    combined_embeddings = np.vstack((cluster_1_embeddings, cluster_0_embeddings))
+                elif len(cluster_1_embeddings) > 0:
+                    combined_embeddings = cluster_1_embeddings
+                elif len(cluster_0_embeddings) > 0:
+                    combined_embeddings = cluster_0_embeddings
+                else:
+                    combined_embeddings = np.array([]).reshape(0, embedding_topk.shape[1])
+                    
+                return combined_embeddings, combined_contents
 
 def similarity_filtering(topk_embeddings,topk_contents):
     top_k_filtered_avg={}
