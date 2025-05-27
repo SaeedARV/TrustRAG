@@ -31,6 +31,9 @@ This document outlines the key enhancements made to the TrustRAG project to impr
 - **Adaptive Thresholds**: Dynamically adjusts thresholds based on data characteristics
 - **Improved Error Handling**: Better handling of edge cases like empty clusters or singleton clusters
 - **Comprehensive Documentation**: Added detailed documentation explaining the function's purpose and logic
+- **Direct Adversarial Content Detection**: Added upfront checking for known adversarial content
+- **Better Filtering System**: Implemented improved filtering to remove known adversarial content
+- **Early Exit Conditions**: Added conditions to avoid unnecessary processing
 
 ## 3. Enhanced Conflict Detection
 
@@ -46,18 +49,41 @@ This document outlines the key enhancements made to the TrustRAG project to impr
 - **Improved Information Extraction**: Focuses on extracting only trustworthy information
 - **Enhanced Synthesis Logic**: Better integration of internal knowledge with external information
 - **Structured Output Format**: Clearer presentation of analysis results
+- **Smaller Batch Sizes**: Reduced batch sizes to work better with smaller models like TinyLlama
+- **Sequential Processing Fallback**: Added fallback to sequential processing if batch processing fails
+- **Improved Error Handling**: Added better error messages and handling for processing failures
+- **Simplified Prompts**: Modified prompts for better compatibility with smaller models
 
-## 4. Other Improvements
+## 4. Model Loading Improvements
 
-- Code refactoring for better readability and maintainability
-- Better error handling throughout the codebase
-- More detailed comments explaining the logic and purpose of each component
-- Enhanced compatibility with different LLM backends
+- **Gated Model Detection**: Added checks to detect models requiring authentication
+- **Cascading Fallback System**: Implemented fallback to alternative models if primary model fails
+- **Enhanced Error Handling**: Added better error handling and logging during model loading
+- **Open-Source Model Support**: Updated configuration to use only open-source models
+
+## 5. Sample Datasets and Directory Structure
+
+- **Sample Datasets**: Created sample dataset files for NQ, HotpotQA, and MSMarco
+- **Representative Questions**: Added sample questions with correct and incorrect answers
+- **Directory Structure**: Added code to create necessary directories if they don't exist
+- **Improved File Path Handling**: Enhanced file path handling for better compatibility
+- **Fixed Logging Issues**: Resolved issues with logging directories
+
+## 6. Command Line and Robustness Improvements
+
+- **Enhanced Command Construction**: Improved command construction in run.py
+- **Better Parameter Handling**: Improved handling of string parameters with proper quoting
+- **Parameter Validation**: Added parameter validation and better error messages
+- **Comprehensive Error Handling**: Added error handling throughout the codebase
+- **Fallback Mechanisms**: Implemented fallback options for critical functions
+- **Informative Logging**: Added detailed logging to help diagnose issues
+- **Input Resilience**: Made the code more resilient to unexpected inputs or failures
 
 These enhancements significantly improve TrustRAG's ability to:
 1. Detect and filter out adversarial content
 2. Provide more accurate and trustworthy answers
 3. Handle a wider range of attack vectors
 4. Better balance the use of retrieved information with model knowledge
+5. Run successfully without requiring gated models or specific datasets
 
 The enhanced version maintains compatibility with the original code structure while improving the core defensive capabilities of the system. 

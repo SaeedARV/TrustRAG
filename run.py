@@ -2,8 +2,13 @@ import os
 import re
 
 def run(test_params):
+    # Create logs directory if it doesn't exist
+    if not os.path.exists('logs'):
+        os.makedirs('logs')
+        print("Created logs directory")
+        
     log_name = get_log_name(test_params)
-    if log_name + '.log' in os.listdir('logs'):
+    if os.path.exists(f'logs/{log_name}.log'):
         print(f"log {log_name}.log already exists")
         # load the log file
         with open(f'logs/{log_name}.log', 'r') as f:
@@ -20,39 +25,26 @@ def run(test_params):
         else:
             print(f"log {log_name}.log is not complete, remove it")
             os.remove(f'logs/{log_name}.log')
+    
+    cmd = f"python main_trustrag.py"
+    for key, value in test_params.items():
+        if value is None:
+            continue
+        elif type(value) is str:
+            cmd += f" --{key}=\"{value}\""
+        else:
+            cmd += f" --{key}={value}"
 
-    cmd = f"python3 -u main_trustrag.py \
-        --eval_model_code {test_params['eval_model_code']}\
-        --eval_dataset {test_params['eval_dataset']}\
-        --split {test_params['split']}\
-        --query_results_dir {test_params['query_results_dir']}\
-        --model_name {test_params['model_name']}\
-        --top_k {test_params['top_k']}\
-        --gpu_id {test_params['gpu_id']}\
-        --attack_method {test_params['attack_method']}\
-        --adv_per_query {test_params['adv_per_query']}\
-        --score_function {test_params['score_function']}\
-        --repeat_times {test_params['repeat_times']}\
-        --M {test_params['M']}\
-        --seed {test_params['seed']}\
-        --log_name {log_name} \
-        --defend_method {test_params['defend_method']}\
-        --removal_method {test_params['removal_method']}"    
+    cmd += f" --log_name={log_name}"
+    print(cmd)
     os.system(cmd)
+    return
 
 def get_log_name(test_params):
-    log_name = f"{test_params['eval_dataset']}-{test_params['eval_model_code']}-{test_params['model_name']}-Top{test_params['top_k']}--M{test_params['M']}x{test_params['repeat_times']}"
-    if test_params['attack_method'] != None:
-        log_name += f"-adv-{test_params['attack_method']}"
-    if test_params['removal_method'] != None:
-        log_name += f"-removal-{test_params['removal_method']}"
-    if test_params['defend_method'] != None:
-        log_name += f"-defend-{test_params['defend_method']}"
-    log_name += f"-{test_params['score_function']}-{test_params['adv_per_query']}-{test_params['top_k']}"
-    if test_params['note'] != None:
-        log_name = test_params['note']
+    log_name = f"{test_params['eval_model_code']}_{test_params['eval_dataset']}_{test_params['attack_method']}_{test_params['defend_method']}_{test_params['removal_method']}_{test_params['adv_per_query']}_{test_params['model_name']}"
+    if test_params['note'] is not None:
+        log_name += f"_{test_params['note']}"
     return log_name
-
 
 
 test_params = {
@@ -60,7 +52,7 @@ test_params = {
     'eval_dataset': "nq", # ['nq','hotpotqa', 'msmarco']
     'split': "test",
     'query_results_dir': 'main',
-    'model_name': 'llama7b', 
+    'model_name': 'TinyLlama/TinyLlama-1.1B-Chat-v1.0', # Using a smaller open-source model
     'top_k': 5,
     'gpu_id': 0,
     'attack_method': 'LM_targeted', # ['none', 'LM_targeted', 'hotflip', 'pia']
@@ -75,13 +67,23 @@ test_params = {
 }
 
 
-for dataset in ['hotpotqa', 'nq', 'msmarco']:
-    for model in ["mistralai/Mistral-Nemo-Instruct-2407"]:
-        for number_of_adv in [1, 2, 3, 4, 5]:
-            test_params['eval_dataset'] = dataset
-            test_params['adv_per_query']=number_of_adv
-            test_params['model_name'] = model
-            test_params['attack_method'] = 'hotflip'
-            test_params['defend_method'] = 'conflict'
-            test_params['removal_method'] = 'kmeans_ngram'
-            run(test_params)
+# Test with different datasets and open-source models
+open_models = [
+    "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+    "facebook/opt-350m",
+    "facebook/opt-1.3b"
+]
+
+for dataset in ['nq', 'hotpotqa', 'msmarco']:
+    for model in open_models:
+        test_params['eval_dataset'] = dataset
+        test_params['model_name'] = model
+        run(test_params)
+
+# Test with different defense methods
+defense_methods = ['none', 'conflict', 'astute', 'instruct']
+for method in defense_methods:
+    test_params['defend_method'] = method
+    test_params['model_name'] = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"  # Use the smallest model for quick testing
+    test_params['eval_dataset'] = 'nq'  # Use a single dataset for comparison
+    run(test_params)
