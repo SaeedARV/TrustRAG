@@ -179,4 +179,5 @@ data_cache/
 logs/
 
 
- 
+custom_rag_results/
+rag_results/

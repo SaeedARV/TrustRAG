@@ -1,0 +1,17 @@
+{
+  "custom_doc1": {
+    "text": "TrustRAG is a system for making Retrieval-Augmented Generation more robust against adversarial attacks. It uses various defense mechanisms to filter out potentially harmful content."
+  },
+  "custom_doc2": {
+    "text": "Reinforcement Learning (RL) is a type of machine learning where an agent learns to make decisions by taking actions in an environment to maximize rewards. It's used in robotics, game playing, and recommendation systems."
+  },
+  "custom_doc3": {
+    "text": "K-means clustering is an unsupervised learning algorithm that groups similar data points together. In TrustRAG, it's used to identify and filter out adversarial content by finding outliers in the embedding space."
+  },
+  "custom_doc4": {
+    "text": "Large Language Models (LLMs) like GPT-4 and Claude are trained on vast amounts of text data. They can generate human-like text but may hallucinate information not present in their training data."
+  },
+  "custom_doc5": {
+    "text": "Prompt injection attacks try to manipulate an AI system by including malicious instructions in the input. These attacks can potentially make the AI ignore its safety constraints or produce harmful outputs."
+  }
+}

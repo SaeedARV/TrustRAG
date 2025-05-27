@@ -138,3 +138,20 @@ These enhancements significantly improve TrustRAG's ability to:
 5. Run successfully without requiring gated models or specific datasets
 
 The enhanced version maintains compatibility with the original code structure while improving the core defensive capabilities of the system. 
+
+### Latest Additions
+
+#### Added Raw RAG Response Capability
+- Added a new `raw_rag` defend method to main_trustrag.py that returns the raw retrieved documents without LLM processing
+- Created a standalone SimpleRAG implementation in simple_rag.py that provides a lightweight RAG system
+- Added functionality to save retrieval results in multiple formats (JSON, text, pickle) for analysis
+- Created custom_rag.py to demonstrate how to use the RAG system with custom document collections
+- Added load_results.py to easily view and analyze saved retrieval results
+- Created documentation in README_RAG.md explaining the RAG implementation and its uses
+
+These additions provide several benefits:
+1. Allows direct inspection of retrieved documents before LLM processing
+2. Provides tools for debugging and improving retrieval quality
+3. Enables offline analysis of retrieval patterns
+4. Helps understand how adversarial content might infiltrate the RAG pipeline
+5. Offers a simpler implementation for educational purposes and experimentation 

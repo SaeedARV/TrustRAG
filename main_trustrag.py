@@ -40,7 +40,7 @@ def parse_args():
     parser.add_argument('--seed', type=int, default=12, help='Random seed')
     parser.add_argument("--log_name", type=str, help="Name of log and result.")
     parser.add_argument("--removal_method", type=str, default='kmeans_ngram', choices=['kmeans', 'kmeans_ngram', 'rl', 'none'])
-    parser.add_argument("--defend_method", type=str, default='conflict', choices=['none', 'conflict', 'astute', 'instruct'])
+    parser.add_argument("--defend_method", type=str, default='conflict', choices=['none', 'conflict', 'astute', 'instruct', 'raw_rag'])
     parser.add_argument("--rl_training", type=bool, default=True, help='Whether to train the RL model during filtering')
     args = parser.parse_args()
     logger.info(args)
@@ -124,6 +124,36 @@ def main():
             return  # Exit the function
         
     incorrect_answers = list(incorrect_answers.values())
+    
+    # Check if we have enough incorrect answers for the requested parameters
+    total_queries_needed = args.repeat_times * args.M
+    if len(incorrect_answers) < total_queries_needed:
+        logger.warning(f"Not enough incorrect answers available ({len(incorrect_answers)}) for the requested parameters (repeat_times={args.repeat_times}, M={args.M}). Need {total_queries_needed} items.")
+        logger.info(f"Adjusting parameters to use available data...")
+        
+        # Option 1: Reduce M to fit available data with current repeat_times
+        if args.repeat_times > 0:
+            new_M = len(incorrect_answers) // args.repeat_times
+            if new_M > 0:
+                logger.info(f"Adjusting M from {args.M} to {new_M}")
+                args.M = new_M
+            else:
+                # Option 2: If we can't even get 1 query per repeat, reduce repeat_times
+                new_repeat_times = min(len(incorrect_answers), 1)
+                new_M = min(len(incorrect_answers), args.M)
+                logger.info(f"Adjusting repeat_times from {args.repeat_times} to {new_repeat_times} and M from {args.M} to {new_M}")
+                args.repeat_times = new_repeat_times
+                args.M = new_M
+        
+        # If we still don't have enough data, duplicate existing items
+        if args.repeat_times * args.M > len(incorrect_answers):
+            logger.info(f"Duplicating existing incorrect answers to reach required count")
+            incorrect_answers = incorrect_answers * (total_queries_needed // len(incorrect_answers) + 1)
+            incorrect_answers = incorrect_answers[:total_queries_needed]
+            
+    # log final parameters
+    logger.info(f"Using {len(incorrect_answers)} incorrect answers with repeat_times={args.repeat_times}, M={args.M}")
+    
     # load BEIR top_k results  
     if args.orig_beir_results is None: 
         logger.info(f"Please evaluate on BEIR first -- {args.eval_model_code} on {args.eval_dataset}")
@@ -198,7 +228,18 @@ def main():
         model.cuda()
         c_model.cuda()
         embedding_model.cuda()
-        target_queries_idx = range(iter * args.M, iter * args.M + args.M) 
+        
+        # Calculate target query indices with bounds checking
+        start_idx = iter * args.M
+        end_idx = min(start_idx + args.M, len(incorrect_answers))
+        target_queries_idx = range(start_idx, end_idx)
+        
+        # Skip this iteration if we're out of bounds
+        if start_idx >= len(incorrect_answers):
+            logger.warning(f"Skipping iteration {iter+1} as we've run out of data")
+            continue
+            
+        # Get target queries safely
         target_queries = [incorrect_answers[idx]['question'] for idx in target_queries_idx]
 
         if args.attack_method not in [None, 'None']:
@@ -443,6 +484,15 @@ def main():
                 final_answers = astute_query(top_ks, questions, llm, sampling_params)
             elif args.defend_method == 'instruct':
                 final_answers = instructrag_query(top_ks, questions, llm, sampling_params)
+            elif args.defend_method == 'raw_rag':
+                logger.info("Using raw RAG response without LLM processing")
+                final_answers = []
+                for i, docs in enumerate(top_ks):
+                    # Format the documents with their scores
+                    rag_response = f"Question: {questions[i]}\n\nRetrieved Documents:\n"
+                    for j, doc in enumerate(docs):
+                        rag_response += f"Document {j+1}:\n{doc}\n\n"
+                    final_answers.append(rag_response)
             elif args.defend_method == 'none':
                 final_answer = llm(query_prompts, sampling_params)
                 final_answers = []
@@ -474,6 +524,15 @@ def main():
         elif args.defend_method == 'instruct':
             logger.info("Using instructrag query for {}".format(args.model_name))
             final_answers = instructrag_query_gpt(top_ks, questions, llm)
+        elif args.defend_method == 'raw_rag':
+            logger.info("Using raw RAG response without LLM processing")
+            final_answers = []
+            for i, docs in enumerate(top_ks):
+                # Format the documents with their scores
+                rag_response = f"Question: {questions[i]}\n\nRetrieved Documents:\n"
+                for j, doc in enumerate(docs):
+                    rag_response += f"Document {j+1}:\n{doc}\n\n"
+                final_answers.append(rag_response)
         elif args.defend_method == 'none':
             logger.info("Using llm.query for {}".format(args.model_name))
             final_answers = []

@@ -56,7 +56,7 @@ test_params = {
     'top_k': 5,
     'gpu_id': 0,
     'attack_method': 'LM_targeted', # ['none', 'LM_targeted', 'hotflip', 'pia']
-    'defend_method': 'conflict', # ['none', 'conflict', 'astute', 'instruct']
+    'defend_method': 'conflict', # ['none', 'conflict', 'astute', 'instruct', 'raw_rag']
     'removal_method': 'none', # ['kmeans', 'kmeans_ngram', 'none']
     'adv_per_query': 3, # poison rate = adv_per_query / top_k
     'score_function': 'dot',
@@ -81,7 +81,7 @@ for dataset in ['nq', 'hotpotqa', 'msmarco']:
         run(test_params)
 
 # Test with different defense methods
-defense_methods = ['none', 'conflict', 'astute', 'instruct']
+defense_methods = ['none', 'conflict', 'astute', 'instruct', 'raw_rag']
 for method in defense_methods:
     test_params['defend_method'] = method
     test_params['model_name'] = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"  # Use the smallest model for quick testing
@@ -101,4 +101,13 @@ for dataset in ['nq', 'hotpotqa', 'msmarco']:
     test_params['eval_dataset'] = dataset
     test_params['removal_method'] = 'rl'
     test_params['note'] = f'rl_defense_{dataset}'
+    run(test_params)
+
+# Test raw RAG with different filtering methods
+for filtering in ['none', 'kmeans', 'kmeans_ngram', 'rl']:
+    test_params['defend_method'] = 'raw_rag'
+    test_params['removal_method'] = filtering
+    test_params['model_name'] = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
+    test_params['eval_dataset'] = 'nq'
+    test_params['note'] = f'raw_rag_{filtering}'
     run(test_params)
